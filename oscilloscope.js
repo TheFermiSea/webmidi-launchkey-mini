@@ -487,6 +487,44 @@ function initOscilloscope({
     scopeVis.currentSynthParams = params;
   }
 
+  function drawRealtimeWaveform(data) {
+    const { ctx, width, height, amplitudeMultiplier } = scopeVis;
+
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, width, height);
+    scopeVis.drawGridlines();
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#555";
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "lime"; // Use a different color for the real waveform
+    ctx.beginPath();
+
+    const pixelsPerSample = width / data.length;
+    let isFirstPoint = true;
+
+    for (let i = 0; i < data.length; i++) {
+      const sampleValue = data[i];
+      const amplifiedSample = sampleValue * amplitudeMultiplier;
+      const clampedSample = Math.max(-1.0, Math.min(1.0, amplifiedSample));
+      const x = i * pixelsPerSample;
+      const y = ((clampedSample * -1 + 1) / 2) * (height - 10) + 5;
+
+      if (isFirstPoint) {
+        ctx.moveTo(x, y);
+        isFirstPoint = false;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+  }
+
   return {
     connect,
     disconnect,
@@ -507,6 +545,7 @@ function initOscilloscope({
     setSynthParameters,
     startDrawing,
     stopDrawing,
+    drawRealtimeWaveform,
     get activeNotes() {
       return scopeVis.activeNotes;
     },

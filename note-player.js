@@ -7,6 +7,7 @@ function initNotePlayer({
   soundGenerator,
   oscilloscope,
   getCurrentSynthType,
+  getRustSynthNode,
 }) {
   const NOTES = [
     "C",
@@ -95,40 +96,52 @@ function initNotePlayer({
       const noteIdx = note % 12;
 
       const synthType = getCurrentSynthType();
-      let selectedSynth;
-      if (synthType === "additive") {
-        selectedSynth = additiveSynth;
-      } else if (synthType === "fm") {
-        selectedSynth = fmSynth;
+      const noteFrequency = 440 * Math.pow(2, (note - 69) / 12);
+      const synthType = getCurrentSynthType();
+
+      if (synthType === 'rust_basic' || synthType === 'rust_additive') {
+        const rustSynthNode = getRustSynthNode();
+        if (rustSynthNode) {
+          // The waveform is set in the main thread's updateSynthDisplay function.
+          // Here we just play the note.
+          rustSynthNode.port.postMessage({ type: 'note_on', frequency: noteFrequency });
+          activeNotes[note] = { isRust: true, stop: () => {
+            rustSynthNode.port.postMessage({ type: 'note_off' });
+          }};
+        }
       } else {
-        selectedSynth = synth;
+        let selectedSynth;
+        if (synthType === "additive") {
+          selectedSynth = additiveSynth;
+        } else if (synthType === "fm") {
+          selectedSynth = fmSynth;
+        } else {
+          selectedSynth = synth;
+        }
+
+        const synthResult = selectedSynth.playNote({
+          note: NOTES[noteIdx],
+          octave,
+          velocity,
+        });
+        const { oscillator, gainNode } = synthResult;
+
+        // Get harmonic information if available (for additive synth)
+        let harmonics = [1]; // Default to fundamental only
+        if (synthType === "additive" && selectedSynth.getHarmonics) {
+          harmonics = selectedSynth.getHarmonics();
+        }
+
+        oscilloscope.addNote(note, noteFrequency, harmonics, velocity);
+        oscilloscope.connect(gainNode);
+
+        function stop() {
+          oscillator.stop();
+          oscilloscope.disconnect(gainNode);
+        }
+
+        activeNotes[note] = { stop };
       }
-
-      const synthResult = selectedSynth.playNote({
-        note: NOTES[noteIdx],
-        octave,
-        velocity,
-      });
-      const { oscillator, gainNode } = synthResult;
-
-      // Calculate frequency for oscilloscope display
-      const noteFrequency = 440 * Math.pow(2, (note - 69) / 12); // A4 = 440Hz, MIDI note 69
-
-      // Get harmonic information if available (for additive synth)
-      let harmonics = [1]; // Default to fundamental only
-      if (synthType === "additive" && selectedSynth.getHarmonics) {
-        harmonics = selectedSynth.getHarmonics();
-      }
-
-      oscilloscope.addNote(note, noteFrequency, harmonics, velocity);
-      oscilloscope.connect(gainNode);
-
-      function stop() {
-        oscillator.stop();
-        oscilloscope.disconnect(gainNode);
-      }
-
-      activeNotes[note] = { stop };
     }
   }
 
