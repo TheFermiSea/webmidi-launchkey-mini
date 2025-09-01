@@ -4,3 +4,6 @@
 *.md
 !README.md
 !OSCILLOSCOPE_COMPLETE_FIX.md
+node_modules/
+pkg/
+rust-synth/target/

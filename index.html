@@ -169,11 +169,8 @@
             <div style="margin-bottom: 10px">
                 <label for="synthSelector">Synthesizer Type: </label>
                 <select id="synthSelector">
-                    <option value="additive">
-                        Additive Synth (Fourier Demo)
-                    </option>
-                    <option value="fm">FM Synth (Frequency Modulation)</option>
-                    <option value="basic">Basic Synth (Waveforms)</option>
+                    <option value="rust_basic">Rust Basic Synth</option>
+                    <option value="rust_additive">Rust Additive Synth</option>
                 </select>
 
                 <label for="synthGainControl" style="margin-left: 20px"
@@ -239,58 +236,6 @@
             <div id="harmonicSliders"></div>
         </div>
 
-        <div
-            id="fmControls"
-            style="
-                margin: 20px;
-                padding: 15px;
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                background-color: #f9f9f9;
-                display: none;
-            "
-        >
-            <h4>FM Synthesis Controls</h4>
-            <div style="margin-bottom: 15px">
-                <label for="carrierRatioControl">Carrier Ratio: </label>
-                <input
-                    type="range"
-                    id="carrierRatioControl"
-                    min="0.1"
-                    max="8.0"
-                    value="1.0"
-                    step="0.1"
-                    style="width: 200px"
-                />
-                <span id="carrierRatioValue">1.0</span>
-            </div>
-            <div style="margin-bottom: 15px">
-                <label for="modulatorRatioControl">Modulator Ratio: </label>
-                <input
-                    type="range"
-                    id="modulatorRatioControl"
-                    min="0.1"
-                    max="16.0"
-                    value="1.0"
-                    step="0.1"
-                    style="width: 200px"
-                />
-                <span id="modulatorRatioValue">1.0</span>
-            </div>
-            <div style="margin-bottom: 15px">
-                <label for="modulationIndexControl">Modulation Index: </label>
-                <input
-                    type="range"
-                    id="modulationIndexControl"
-                    min="0.0"
-                    max="20.0"
-                    value="2.0"
-                    step="0.1"
-                    style="width: 200px"
-                />
-                <span id="modulationIndexValue">2.0</span>
-            </div>
-        </div>
 
         <div id="renderedKeyboard"></div>
 
@@ -315,12 +260,6 @@
         <!-- imports Scope -->
         <script src="sound-generator.js"></script>
         <!-- imports initSoundGenerator() -->
-        <script src="synth.js"></script>
-        <!-- imports initSynth() -->
-        <script src="additive-synth.js"></script>
-        <!-- imports initAdditiveSynth() -->
-        <script src="fm-synth.js"></script>
-        <!-- imports initFMSynth() -->
         <script src="oscilloscope.js"></script>
         <!-- imports initOscilloscope() -->
         <script src="note-player.js"></script>
@@ -350,8 +289,6 @@
                 const audioContext = new (window.AudioContext ||
                     window.webkitAudioContext)();
 
-                // Oscilloscope will be initialized after synth variables are defined
-
                 // Synth gain control
                 const synthGainControl =
                     document.getElementById("synthGainControl");
@@ -365,34 +302,57 @@
                         currentSynthGain.toFixed(1) + "x";
                 });
 
-                const synth = initSynth({
-                    audioContext,
-                    onPatchChange,
-                    getSynthGain: () => currentSynthGain,
-                }); // creates an audio context for one "channel"
-                const additiveSynth = initAdditiveSynth({
-                    audioContext,
-                    onPatchChange,
-                    getSynthGain: () => currentSynthGain,
-                });
-                const fmSynth = initFMSynth({
-                    audioContext,
-                    onPatchChange,
-                    getSynthGain: () => currentSynthGain,
-                });
                 const soundGenerator = initSoundGenerator({ SoundEffect });
+
+                // --- RUST SYNTH SETUP ---
+                let rustSynthNode;
+                async function setupRustSynth() {
+                    const wasmModule = await fetch('./pkg/rust_synth_bg.wasm');
+                    await audioContext.audioWorklet.addModule('rust-synth-processor.js');
+                    rustSynthNode = new AudioWorkletNode(audioContext, 'rust-synth-processor');
+
+                    rustSynthNode.port.postMessage({
+                        type: 'init',
+                        wasmModule,
+                        sampleRate: audioContext.sampleRate,
+                    });
+
+                    return new Promise(resolve => {
+                        rustSynthNode.port.onmessage = (event) => {
+                            if (event.data.type === 'ready') {
+                                console.log('Rust synth is ready.');
+                                resolve();
+                            }
+                        };
+                    });
+                }
+
+                let oscilloscope;
+
+                setupRustSynth().then(() => {
+                    rustSynthNode.connect(audioContext.destination);
+                    rustSynthNode.port.onmessage = (event) => {
+                        if (event.data.type === 'ready') {
+                            console.log('Rust synth is ready.');
+                        } else if (event.data.type === 'audio_data') {
+                            if (currentSynthType === 'rust_basic' || currentSynthType === 'rust_additive') {
+                                oscilloscope.drawRealtimeWaveform(event.data.data);
+                            }
+                        }
+                    };
+                });
+                // --- END RUST SYNTH SETUP ---
 
                 // Synth selector functionality
                 const synthSelector = document.getElementById("synthSelector");
-                let currentSynthType = "additive"; // Default to additive for educational purposes
+                let currentSynthType = "rust_basic"; // Default to rust basic
 
                 // Initialize oscilloscope now that synth variables are defined
-                const oscilloscope = initOscilloscope({
+                oscilloscope = initOscilloscope({
                     Scope,
                     audioContext,
                     canvas: document.querySelector("#osc1"),
                     getCurrentSynthType: () => currentSynthType,
-                    getFMSynth: () => fmSynth,
                 });
 
                 // Amplitude control for oscilloscope
@@ -496,7 +456,7 @@
                         document.getElementById("harmonicSliders");
 
                     // Create sliders for each harmonic
-                    for (let i = 0; i < additiveSynth.NUM_HARMONICS; i++) {
+                    for (let i = 0; i < 20; i++) {
                         const controlDiv = document.createElement("div");
                         controlDiv.className = "harmonic-control";
 
@@ -518,19 +478,15 @@
 
                         // Update harmonic when slider changes
                         slider.addEventListener("input", (e) => {
-                            const amplitude = parseFloat(e.target.value) / 100;
-                            additiveSynth.setHarmonic(i, amplitude);
                             valueDisplay.textContent =
-                                Math.round(amplitude * 100) + "%";
+                                Math.round(e.target.value) + "%";
 
-                            // Update oscilloscope with new harmonic information for all active notes
-                            const newHarmonics = additiveSynth.getHarmonics();
-                            if (oscilloscope.activeNotes) {
-                                for (const noteId in oscilloscope.activeNotes) {
-                                    oscilloscope.updateNoteHarmonics(
-                                        noteId,
-                                        newHarmonics,
-                                    );
+                            const harmonics = Array.from(harmonicSliders.querySelectorAll('.harmonic-slider'))
+                                .map(s => parseFloat(s.value) / 100);
+
+                            if (currentSynthType === 'rust_additive') {
+                                if (rustSynthNode) {
+                                    rustSynthNode.port.postMessage({ type: 'set_harmonics', harmonics: new Float32Array(harmonics) });
                                 }
                             }
                         });
@@ -540,136 +496,16 @@
                         controlDiv.appendChild(valueDisplay);
                         harmonicSliders.appendChild(controlDiv);
                     }
-
-                    // Function to update sliders when preset changes
-                    window.updateHarmonicSliders = function (harmonics) {
-                        const sliders =
-                            harmonicSliders.querySelectorAll(
-                                ".harmonic-slider",
-                            );
-                        const valueDisplays =
-                            harmonicSliders.querySelectorAll(".harmonic-value");
-
-                        harmonics.forEach((amplitude, i) => {
-                            if (sliders[i]) {
-                                sliders[i].value = Math.round(amplitude * 100);
-                                valueDisplays[i].textContent =
-                                    Math.round(amplitude * 100) + "%";
-                            }
-                        });
-
-                        // Update oscilloscope with new harmonic information for all active notes
-                        if (oscilloscope.activeNotes) {
-                            for (const noteId in oscilloscope.activeNotes) {
-                                oscilloscope.updateNoteHarmonics(
-                                    noteId,
-                                    harmonics,
-                                );
-                            }
-                        }
-                    };
                 }
 
                 createHarmonicControls();
 
-                // Create FM controls
-                function createFMControls() {
-                    const carrierRatioControl = document.getElementById(
-                        "carrierRatioControl",
-                    );
-                    const carrierRatioValue =
-                        document.getElementById("carrierRatioValue");
-                    const modulatorRatioControl = document.getElementById(
-                        "modulatorRatioControl",
-                    );
-                    const modulatorRatioValue = document.getElementById(
-                        "modulatorRatioValue",
-                    );
-                    const modulationIndexControl = document.getElementById(
-                        "modulationIndexControl",
-                    );
-                    const modulationIndexValue = document.getElementById(
-                        "modulationIndexValue",
-                    );
-
-                    carrierRatioControl.addEventListener("input", (e) => {
-                        const ratio = parseFloat(e.target.value);
-                        fmSynth.setCarrierRatio(ratio);
-                        carrierRatioValue.textContent = ratio.toFixed(1);
-                    });
-
-                    modulatorRatioControl.addEventListener("input", (e) => {
-                        const ratio = parseFloat(e.target.value);
-                        fmSynth.setModulatorRatio(ratio);
-                        modulatorRatioValue.textContent = ratio.toFixed(1);
-                    });
-
-                    modulationIndexControl.addEventListener("input", (e) => {
-                        const index = parseFloat(e.target.value);
-                        fmSynth.setModulationIndex(index);
-                        modulationIndexValue.textContent = index.toFixed(1);
-                    });
-
-                    // Function to update FM controls when preset changes
-                    window.updateFMControls = function (params) {
-                        carrierRatioControl.value = params.carrierRatio;
-                        carrierRatioValue.textContent =
-                            params.carrierRatio.toFixed(1);
-                        modulatorRatioControl.value = params.modulatorRatio;
-                        modulatorRatioValue.textContent =
-                            params.modulatorRatio.toFixed(1);
-                        modulationIndexControl.value = params.modulationIndex;
-                        modulationIndexValue.textContent =
-                            params.modulationIndex.toFixed(1);
-                    };
-                }
-
-                createFMControls();
-
                 const notePlayer = initNotePlayer({
-                    synth,
-                    additiveSynth,
-                    fmSynth,
                     soundGenerator,
                     oscilloscope,
                     getCurrentSynthType: () => currentSynthType,
+                    getRustSynthNode: () => rustSynthNode,
                 });
-
-                function updateSynthDisplay() {
-                    const harmonicControls =
-                        document.getElementById("harmonicControls");
-                    const fmControls = document.getElementById("fmControls");
-
-                    if (currentSynthType === "additive") {
-                        harmonicControls.style.display = "block";
-                        fmControls.style.display = "none";
-                        const presetInfo = additiveSynth.getPresetInfo();
-                        onPatchChange(presetInfo);
-                        updateHarmonicSliders(presetInfo.harmonics);
-                    } else if (currentSynthType === "fm") {
-                        harmonicControls.style.display = "none";
-                        fmControls.style.display = "block";
-                        const presetInfo = fmSynth.getPresetInfo();
-                        onPatchChange(presetInfo);
-                        updateFMControls(presetInfo.params || presetInfo);
-                    } else {
-                        harmonicControls.style.display = "none";
-                        fmControls.style.display = "none";
-                        onPatchChange({
-                            name: "Basic Synth",
-                            type: "waveform",
-                        });
-                    }
-                }
-
-                synthSelector.addEventListener("change", (e) => {
-                    currentSynthType = e.target.value;
-                    console.log("Switched to:", currentSynthType);
-                    updateSynthDisplay();
-                });
-
-                // Initialize with additive synth display
-                updateSynthDisplay();
 
                 // 2. Pipe MIDI messages to synth and UI
 
@@ -739,7 +575,40 @@
 
                 const startupModal = document.getElementById("startupModal");
                 startupModal.parentNode.removeChild(startupModal);
+
+                function updateSynthDisplay() {
+                    const harmonicControls =
+                        document.getElementById("harmonicControls");
+
+                    oscilloscope.stopDrawing(); // Always use the realtime oscilloscope
+
+                    if (currentSynthType === 'rust_additive') {
+                        if (rustSynthNode) {
+                            // Waveform enum: 0: Sine, 1: Square, 2: Sawtooth, 3: Triangle, 4: Pulse, 5: Additive
+                            rustSynthNode.port.postMessage({ type: 'set_waveform', waveform: 5 });
+                        }
+                        harmonicControls.style.display = "block";
+                        onPatchChange({ name: "Rust Additive Synth", type: "additive" });
+                    } else { // rust_basic
+                        if (rustSynthNode) {
+                            // For rust_basic, let's default to Sine (0)
+                            rustSynthNode.port.postMessage({ type: 'set_waveform', waveform: 0 });
+                        }
+                        harmonicControls.style.display = "none";
+                        onPatchChange({
+                            name: "Rust Basic Synth",
+                            type: "waveform",
+                        });
+                    }
+                }
+
+                synthSelector.addEventListener("change", (e) => {
+                    currentSynthType = e.target.value;
+                    console.log("Switched to:", currentSynthType);
+                    updateSynthDisplay();
+                });
+
+                // Initialize with rust_basic synth display
+                updateSynthDisplay();
             };
         </script>
-    </body>
-</html>
